@@ -13,6 +13,7 @@ Launch it once, see its status in the menu bar, and toggle it from a mouse butto
 - [Usage and settings](#usage-and-settings)
 - [URL commands](#url-commands)
 - [Logitech MX Master integration](#logitech-mx-master-integration)
+- [Architecture](#architecture)
 - [Development and testing](#development-and-testing)
 - [Privacy](#privacy)
 - [License](#license)
@@ -141,6 +142,55 @@ The included `toggle.command` file is a convenience wrapper for the toggle URL.
 5. If a direct Shortcut action is unavailable, assign a keyboard shortcut to the macOS Shortcut and map the mouse button to the same key combination.
 
 Test the assignment in the applications where you use the mouse: per-app mappings may override the global mapping. Options+ labels and available actions vary by version; the physical button integration still needs verification on your Mac.
+
+## Architecture
+
+The mouse integration sends standard macOS URL commands. Inside the app, `AppDelegate` manages the menu bar and enabled state, while `JigglerController` checks inactivity and schedules cursor movement.
+
+```mermaid
+flowchart TD
+    mouse["MX Master 3S button"] --> logi["Logi Options+"]
+    logi --> shortcut["macOS Shortcut"]
+    shortcut --> url["mxjiggler://toggle / on / off"]
+
+    subgraph app["MX Jiggler · native Swift app"]
+        entry["main.swift<br/>Single-instance lock and app startup"]
+        delegate["AppDelegate<br/>Lifecycle and ON/OFF state"]
+        command["URLCommand<br/>Validate and parse commands"]
+        menu["NSStatusItem / NSMenu<br/>Indicator, toggle, and settings"]
+        settings["Settings<br/>Enabled preference, interval, idle threshold"]
+        jiggler["JigglerController<br/>Timer and safe cursor return"]
+        policy["JigglePolicy<br/>Interval, idle threshold, display bounds"]
+
+        entry --> delegate
+        command --> delegate
+        menu -->|"Clicks and settings changes"| delegate
+        delegate -->|"Update indicator"| menu
+        delegate -->|"Read and save preferences"| settings
+        delegate -->|"Start / stop"| jiggler
+        jiggler -->|"Read configuration"| settings
+        jiggler --> policy
+        jiggler -->|"Permission lost: switch OFF"| delegate
+    end
+
+    subgraph macos["macOS services"]
+        launch["Launch Services<br/>Info.plist URL scheme registration"]
+        defaults["UserDefaults<br/>Local preferences"]
+        accessibility["Accessibility<br/>AXIsProcessTrusted"]
+        graphics["Core Graphics<br/>Hardware idle, buttons, displays, cursor events"]
+    end
+
+    url --> launch
+    launch -->|"Deliver URL to AppDelegate"| command
+    settings --> defaults
+    delegate -->|"Check before enabling"| accessibility
+    jiggler -->|"Check each tick"| accessibility
+    jiggler -->|"Read state and post movement"| graphics
+```
+
+`JigglerController` checks once per second while enabled. A jiggle requires Accessibility permission, sufficient inactivity, an elapsed interval, and no held mouse button. The cursor returns after approximately 150 ms only if it is still at the displaced position and no recent hardware activity is detected.
+
+The diagram uses a fenced `mermaid` block so it can render in GitHub and in a Mermaid-enabled VS Code Markdown preview. Component names match the current implementation; permission handling and menu bar logic both live in `AppDelegate`.
 
 ## Development and testing
 
